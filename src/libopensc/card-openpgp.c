@@ -1607,6 +1607,44 @@ pgp_get_pubkey_pem(sc_card_t *card, unsigned int tag, u8 *buf, size_t buf_len)
 
 
 /**
+ * Internal: ISO 7816-4 SELECT DATA - selects a DO within a DO tag with several instances
+ * (supported since OpenPGP Card v3 for DO 7F21 only, see section 7.2.5 of the specification;
+ *  this enables us to store multiple Card holder certificates in DO 7F21)
+ *
+ * p1: number of an instance (DO 7F21: 0x00 for AUT, 0x01 for DEC and 0x02 for SIG)
+ */
+static int
+pgp_select_data(sc_card_t *card, u8 p1){
+	sc_apdu_t	apdu;
+	u8	apdu_case = SC_APDU_CASE_4;
+	u8	apdu_data[6];
+	int	r;
+
+	LOG_FUNC_CALLED(card->ctx);
+
+	// create apdu
+	sc_format_apdu(card, &apdu, apdu_case, 0xa5, p1, 0x04);
+	apdu.lc = 6;
+	apdu_data[0] = 0x60;
+	apdu_data[1] = 0x04;
+	apdu_data[2] = 0x5c;
+	apdu_data[3] = 0x02;
+	apdu_data[4] = 0x7f;
+	apdu_data[5] = 0x21;
+	apdu.le = 0;
+	apdu.data = apdu_data;
+	apdu.datalen = 6;
+
+	// transmit apdu
+	r = sc_transmit_apdu(card, &apdu);
+	LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
+	r = sc_check_sw(card, apdu.sw1, apdu.sw2);
+	LOG_TEST_RET(card->ctx, r, "Card returned error");
+	LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
+}
+
+
+/**
  * ABI: ISO 7816-4 GET DATA - get contents of a DO.
  */
 static int
@@ -1768,6 +1806,22 @@ pgp_put_data(sc_card_t *card, unsigned int tag, const u8 *buf, size_t buf_len)
 	int r;
 
 	LOG_FUNC_CALLED(card->ctx);
+
+	/* Check for key reference and compatability with OpenPGP Card version;
+	 * since OpenPGP Card v3 it is possible to store multiple Card holder
+	 * certificates by using the SELECT DATA command to switch the instance
+	 * of the 7F21 DO; see section 7.2.5 of OpenPGP Card >= v3.0 */
+	if (tag  == 0x7F2101 || tag == 0x7F2102){ // requested key id is not AUT
+		if (priv->bcd_version >= OPENPGP_CARD_3_0){
+			pgp_select_data(card, tag & 0x3);
+			tag = 0x7F21; // prepare tag variable for next commands
+		}
+		else {
+			sc_log(card->ctx,
+			       "This version does only support certificate for ID=3.");
+			LOG_FUNC_RETURN(card->ctx, SC_ERROR_NOT_SUPPORTED);
+		}
+	}
 
 	/* check if the tag is writable */
 	if (priv->current->id != tag)
