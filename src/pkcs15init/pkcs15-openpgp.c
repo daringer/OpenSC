@@ -405,7 +405,6 @@ static int openpgp_store_data(struct sc_pkcs15_card *p15card, struct sc_profile 
 	sc_pkcs15_data_info_t *dinfo;
 	u8 buf[254];
 	int r;
-	unsigned int tag;
 
 	LOG_FUNC_CALLED(card->ctx);
 
@@ -420,28 +419,36 @@ static int openpgp_store_data(struct sc_pkcs15_card *p15card, struct sc_profile 
 	case SC_PKCS15_TYPE_CERT:
 		cinfo = (sc_pkcs15_cert_info_t *) obj->data;
 		cid = &(cinfo->id);
+		unsigned int tag = 0x7F21;
 
 		if (cid->len != 1) {
 			sc_log(card->ctx, "ID=%s is not valid.", sc_dump_hex(cid->value, cid->len));
 			LOG_FUNC_RETURN(card->ctx, SC_ERROR_INVALID_ARGUMENTS);
 		}
 
-		/* change tag based on the occurence in DO (multiple instances available since v3.0)
-		 * see section 7.2.5 of OpenPGP Card Specification
-		 * support for this function can only be checked in pgp_put_data function */
-		switch(cid->value[0]){
-			case 1:
-				tag = 0x7f2102; // SIG-key, third occurrence in DO with tag 7F21
-				break;
-			case 2:
-				tag = 0x7f2101; // DEC-key, second occurrence in DO with tag 7F21
-				break;
-			case 3:
-				tag = 0x7f21; // AUT-key, standard
-				break;
-			default:
-				sc_log(card->ctx, "ID=%s is not valid.", sc_dump_hex(cid->value, cid->len));
-				LOG_FUNC_RETURN(card->ctx, SC_ERROR_INVALID_ARGUMENTS);
+		/* OpenPGP card v.2 contains only 1 certificate */
+		if (cid->value[0] != 3 && p15card->card->type < SC_CARD_TYPE_OPENPGP_V3) {
+			sc_log(card->ctx,
+			       "This version does not support certificate ID = %d (only ID=3 is supported).",
+			       cid->value[0]);
+			LOG_FUNC_RETURN(card->ctx, SC_ERROR_NOT_SUPPORTED);
+		}
+		/* OpenPGP Card v3 supports multiple Cardholder certificates, see section 7.2.5 */
+		else {
+			switch(cid->value[0]){
+				case 1:
+					tag = 0x7f2102; // SIG-key, third occurrence in DO with tag 7F21
+					break;
+				case 2:
+					tag = 0x7f2101; // DEC-key, second occurrence in DO with tag 7F21
+					break;
+				case 3:
+					tag = 0x7f21; // AUT-key, default
+					break;
+				default:
+					sc_log(card->ctx, "ID=%s is not valid.", sc_dump_hex(cid->value, cid->len));
+					LOG_FUNC_RETURN(card->ctx, SC_ERROR_INVALID_ARGUMENTS);
+			}
 		}
 
 		/* Just update the certificate DO */
