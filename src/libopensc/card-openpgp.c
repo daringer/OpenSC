@@ -1607,7 +1607,7 @@ pgp_get_pubkey_pem(sc_card_t *card, unsigned int tag, u8 *buf, size_t buf_len)
 
 
 /**
- * Internal: ISO 7816-4 SELECT DATA - selects a DO within a DO tag with several instances
+ * Internal: SELECT DATA - selects a DO within a DO tag with several instances
  * (supported since OpenPGP Card v3 for DO 7F21 only, see section 7.2.5 of the specification;
  *  this enables us to store multiple Card holder certificates in DO 7F21)
  *
@@ -1813,7 +1813,7 @@ pgp_put_data(sc_card_t *card, unsigned int tag, const u8 *buf, size_t buf_len)
 	 * of the 7F21 DO; see section 7.2.5 of OpenPGP Card >= v3.0 */
 	if (tag  == 0x7F2101 || tag == 0x7F2102){ // requested key id is not AUT
 		if (priv->bcd_version >= OPENPGP_CARD_3_0){
-			pgp_select_data(card, tag & 0x3);
+			pgp_select_data(card, tag & 0x3); // switch instance of DO 7F21
 			tag = 0x7F21; // prepare tag variable for next commands
 		}
 		else {

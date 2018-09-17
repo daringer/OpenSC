@@ -353,6 +353,7 @@ sc_pkcs15emu_openpgp_init(sc_pkcs15_card_t *p15card)
 		}
 	}
 
+	// TODO something like if(p15card->card->type == SC_CARD_TYPE_OPENPGP_V3)
 	/* Check if certificate DO 7F21 holds data */
 	sc_format_path("7F21", &path);
 	r = sc_select_file(card, &path, &file);
