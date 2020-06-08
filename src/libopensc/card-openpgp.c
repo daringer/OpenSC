@@ -1625,6 +1625,7 @@ pgp_select_data(sc_card_t *card, u8 p1){
 	// create apdu
 	sc_format_apdu(card, &apdu, apdu_case, 0xa5, p1, 0x04);
 	apdu.lc = 6;
+	// get rid of magic numbers and explain what is happening here or change code
 	apdu_data[0] = 0x60;
 	apdu_data[1] = 0x04;
 	apdu_data[2] = 0x5c;
@@ -1811,10 +1812,10 @@ pgp_put_data(sc_card_t *card, unsigned int tag, const u8 *buf, size_t buf_len)
 	 * since OpenPGP Card v3 it is possible to store multiple Card holder
 	 * certificates by using the SELECT DATA command to switch the instance
 	 * of the 7F21 DO; see section 7.2.5 of OpenPGP Card >= v3.0 */
-	if (tag  == 0x7F2101 || tag == 0x7F2102){ // requested key id is not AUT
+	if (tag  == DO_CERT_SIGN || tag == DO_CERT_ENCR){ // requested key id is not AUT
 		if (priv->bcd_version >= OPENPGP_CARD_3_0){
 			pgp_select_data(card, tag & 0x3); // switch instance of DO 7F21
-			tag = 0x7F21; // prepare tag variable for next commands
+			tag = DO_CERT; // prepare tag variable for next commands
 		}
 		else {
 			sc_log(card->ctx,
