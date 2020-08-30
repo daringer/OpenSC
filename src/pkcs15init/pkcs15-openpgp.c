@@ -433,27 +433,16 @@ static int openpgp_store_data(struct sc_pkcs15_card *p15card, struct sc_profile 
 			       cid->value[0]);
 			LOG_FUNC_RETURN(card->ctx, SC_ERROR_NOT_SUPPORTED);
 		}
-		/* OpenPGP Card v3 supports multiple Cardholder certificates, see section 7.2.5 */
-		else {
-			switch(cid->value[0]){
-				case 1:
-					tag = 0x7f2102; // SIG-key, third occurrence in DO with tag 7F21
-					break;
-				case 2:
-					tag = 0x7f2101; // DEC-key, second occurrence in DO with tag 7F21
-					break;
-				case 3:
-					tag = 0x7f21; // AUT-key, default
-					break;
-				default:
-					sc_log(card->ctx, "ID=%s is not valid.", sc_dump_hex(cid->value, cid->len));
-					LOG_FUNC_RETURN(card->ctx, SC_ERROR_INVALID_ARGUMENTS);
-			}
-		}
+
 
 		/* Just update the certificate DO */
-		sc_format_path("7F21", path);
+		u8 param = (u8) (2 - (cid->value[0] - 1));
+		sc_card_ctl(card, SC_CARDCTL_OPENPGP_SELECT_DATA, &param);
+
+        sc_format_path("7F21", path);
 		r = sc_select_file(card, path, &file);
+
+
 		LOG_TEST_RET(card->ctx, r, "Cannot select cert file");
 		r = sc_pkcs15init_authenticate(profile, p15card, file, SC_AC_OP_UPDATE);
 		sc_log(card->ctx,
@@ -461,6 +450,7 @@ static int openpgp_store_data(struct sc_pkcs15_card *p15card, struct sc_profile 
 		       content->len);
 		if (r >= 0 && content->len)
 			r = sc_put_data(p15card->card, tag, (const unsigned char *) content->value, content->len);
+
 		break;
 
 	case SC_PKCS15_TYPE_DATA_OBJECT:

@@ -129,6 +129,8 @@ static void		pgp_free_blob(pgp_blob_t *);
 static int		pgp_get_pubkey(sc_card_t *, unsigned int, u8 *, size_t);
 static int		pgp_get_pubkey_pem(sc_card_t *, unsigned int, u8 *, size_t);
 
+//static int      pgp_get_data_next(sc_card_t *, unsigned int, u8 *, size_t );
+
 
 static pgp_do_info_t	pgp1x_objects[] = {	/* OpenPGP card spec 1.1 */
 	{ 0x004f, SIMPLE,      READ_ALWAYS | WRITE_NEVER, NULL,               NULL        },
@@ -247,8 +249,11 @@ static pgp_do_info_t	pgp34_objects[] = {	/**** OpenPGP card spec 3.4 ****/
 	{ 0x5f48, CONSTRUCTED, READ_NEVER  | WRITE_PIN3,  NULL,               sc_put_data },
 	{ 0x5f50, SIMPLE,      READ_ALWAYS | WRITE_PIN3,  sc_get_data,        sc_put_data },
 	{ 0x5f52, SIMPLE,      READ_ALWAYS | WRITE_NEVER, sc_get_data,        NULL        },
+
 	/* DO 7F21 is CONSTRUCTED in spec; we treat it as SIMPLE: no need to parse TLV */
-	{ DO_CERT, SIMPLE,      READ_ALWAYS | WRITE_PIN3,  sc_get_data,        sc_put_data },
+	/* kept for backwards compatibility (reads ID3), reading certs manually */
+	{ DO_CERT, SIMPLE,      READ_ALWAYS | WRITE_PIN3,  sc_get_data,       sc_put_data },
+
 	{ 0x7f48, CONSTRUCTED, READ_NEVER  | WRITE_NEVER, NULL,               NULL        },
 	{ 0x7f49, CONSTRUCTED, READ_ALWAYS | WRITE_NEVER, NULL,               NULL        },
 	{ DO_AUTH,     CONSTRUCTED, READ_ALWAYS | WRITE_NEVER, pgp_get_pubkey,     NULL   },
@@ -1594,7 +1599,7 @@ pgp_get_pubkey_pem(sc_card_t *card, unsigned int tag, u8 *buf, size_t buf_len)
 		/* p15pubkey.u.ec.params.der and named_curve will be freed by sc_pkcs15_erase_pubkey */
 	}
 	sc_pkcs15_erase_pubkey(&p15pubkey);
-	
+
 	LOG_TEST_RET(card->ctx, r, "public key encoding failed");
 
 	if (len > buf_len)
@@ -1616,25 +1621,23 @@ pgp_get_pubkey_pem(sc_card_t *card, unsigned int tag, u8 *buf, size_t buf_len)
 static int
 pgp_select_data(sc_card_t *card, u8 p1){
 	sc_apdu_t	apdu;
-	u8	apdu_case = SC_APDU_CASE_4;
 	u8	apdu_data[6];
 	int	r;
 
 	LOG_FUNC_CALLED(card->ctx);
 
-	// create apdu
-	sc_format_apdu(card, &apdu, apdu_case, 0xa5, p1, 0x04);
-	apdu.lc = 6;
-	// get rid of magic numbers and explain what is happening here or change code
+	sc_log(card->ctx, "select data with: %u", p1);
+
+	// create apdu data (taken from spec: SELECT DATA 7.2.5.)
 	apdu_data[0] = 0x60;
 	apdu_data[1] = 0x04;
 	apdu_data[2] = 0x5c;
 	apdu_data[3] = 0x02;
 	apdu_data[4] = 0x7f;
 	apdu_data[5] = 0x21;
-	apdu.le = 0;
-	apdu.data = apdu_data;
-	apdu.datalen = 6;
+
+	// apdu, cla, ins, p1, p2, data, datalen, resp, resplen
+	sc_format_apdu_ex(&apdu, 0x00, 0xA5, p1, 0x04, apdu_data, 6, NULL, 0);
 
 	// transmit apdu
 	r = sc_transmit_apdu(card, &apdu);
@@ -1683,7 +1686,6 @@ pgp_get_data(sc_card_t *card, unsigned int tag, u8 *buf, size_t buf_len)
 
 	LOG_FUNC_RETURN(card->ctx, (int)apdu.resplen);
 }
-
 
 /**
  * Internal: write certificate for Gnuk.
@@ -1807,22 +1809,6 @@ pgp_put_data(sc_card_t *card, unsigned int tag, const u8 *buf, size_t buf_len)
 	int r;
 
 	LOG_FUNC_CALLED(card->ctx);
-
-	/* Check for key reference and compatability with OpenPGP Card version;
-	 * since OpenPGP Card v3 it is possible to store multiple Card holder
-	 * certificates by using the SELECT DATA command to switch the instance
-	 * of the 7F21 DO; see section 7.2.5 of OpenPGP Card >= v3.0 */
-	if (tag  == DO_CERT_SIGN || tag == DO_CERT_ENCR){ // requested key id is not AUT
-		if (priv->bcd_version >= OPENPGP_CARD_3_0){
-			pgp_select_data(card, tag & 0x3); // switch instance of DO 7F21
-			tag = DO_CERT; // prepare tag variable for next commands
-		}
-		else {
-			sc_log(card->ctx,
-			       "This version does only support certificate for ID=3.");
-			LOG_FUNC_RETURN(card->ctx, SC_ERROR_NOT_SUPPORTED);
-		}
-	}
 
 	/* check if the tag is writable */
 	if (priv->current->id != tag)
@@ -3328,13 +3314,15 @@ pgp_card_ctl(sc_card_t *card, unsigned long cmd, void *ptr)
 		memmove((sc_serial_number_t *) ptr, &card->serialnr, sizeof(card->serialnr));
 		LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
 		break;
-
+	case SC_CARDCTL_OPENPGP_SELECT_DATA:
+		pgp_select_data(card, *((u8 *) ptr));
+		LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
+		break;
 #ifdef ENABLE_OPENSSL
 	case SC_CARDCTL_OPENPGP_GENERATE_KEY:
 		r = pgp_gen_key(card, (sc_cardctl_openpgp_keygen_info_t *) ptr);
 		LOG_FUNC_RETURN(card->ctx, r);
 		break;
-
 	case SC_CARDCTL_OPENPGP_STORE_KEY:
 		r = pgp_store_key(card, (sc_cardctl_openpgp_keystore_info_t *) ptr);
 		LOG_FUNC_RETURN(card->ctx, r);

@@ -126,8 +126,6 @@ typedef struct pgp_blob {
 /* The DO holding X.509 certificate is constructed but does not contain a child DO.
  * We should notice this when building fake file system later. */
 #define DO_CERT                  0x7f21
-#define DO_CERT_ENCR             0x7f2101
-#define DO_CERT_SIGN             0x7f2102
 /* Control Reference Template of private keys. Ref: Section 4.3.3.7 of OpenPGP card v2 spec.
  * Here we treat them as DOs just for convenience */
 #define DO_SIGN                  0xb600
