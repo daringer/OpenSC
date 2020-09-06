@@ -129,8 +129,6 @@ static void		pgp_free_blob(pgp_blob_t *);
 static int		pgp_get_pubkey(sc_card_t *, unsigned int, u8 *, size_t);
 static int		pgp_get_pubkey_pem(sc_card_t *, unsigned int, u8 *, size_t);
 
-//static int      pgp_get_data_next(sc_card_t *, unsigned int, u8 *, size_t );
-
 
 static pgp_do_info_t	pgp1x_objects[] = {	/* OpenPGP card spec 1.1 */
 	{ 0x004f, SIMPLE,      READ_ALWAYS | WRITE_NEVER, NULL,               NULL        },
@@ -1644,7 +1642,7 @@ pgp_select_data(sc_card_t *card, u8 p1){
 	LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
 	r = sc_check_sw(card, apdu.sw1, apdu.sw2);
 	LOG_TEST_RET(card->ctx, r, "Card returned error");
-	LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
+	LOG_FUNC_RETURN(card->ctx, r);
 }
 
 
@@ -3315,8 +3313,8 @@ pgp_card_ctl(sc_card_t *card, unsigned long cmd, void *ptr)
 		LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
 		break;
 	case SC_CARDCTL_OPENPGP_SELECT_DATA:
-		pgp_select_data(card, *((u8 *) ptr));
-		LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
+		r = pgp_select_data(card, *((u8 *) ptr));
+		LOG_FUNC_RETURN(card->ctx, r);
 		break;
 #ifdef ENABLE_OPENSSL
 	case SC_CARDCTL_OPENPGP_GENERATE_KEY:

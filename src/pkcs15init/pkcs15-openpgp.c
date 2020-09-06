@@ -437,9 +437,13 @@ static int openpgp_store_data(struct sc_pkcs15_card *p15card, struct sc_profile 
 
 		/* Just update the certificate DO */
 		u8 param = (u8) (2 - (cid->value[0] - 1));
-		sc_card_ctl(card, SC_CARDCTL_OPENPGP_SELECT_DATA, &param);
+		r = sc_card_ctl(card, SC_CARDCTL_OPENPGP_SELECT_DATA, &param);
+		if (r < 0) {
+			LOG_TEST_RET(card->ctx, r, "Failed OpenPGP - select data");
+			LOG_FUNC_RETURN(card->ctx, r);
+		}
 
-        sc_format_path("7F21", path);
+		sc_format_path("7F21", path);
 		r = sc_select_file(card, path, &file);
 
 

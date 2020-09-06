@@ -45,6 +45,7 @@ static int sc_pkcs15emu_openpgp_add_data(sc_pkcs15_card_t *);
 				| SC_PKCS15_PIN_FLAG_SO_PIN)
 
 #define PGP_NUM_PRIVDO       4
+#define PGP_MAX_NUM_CERTS    3
 
 typedef struct _pgp_pin_cfg {
 	const char	*label;
@@ -93,12 +94,26 @@ typedef	struct _pgp_key_cfg {
 	int		pubkey_usage;
 } pgp_key_cfg_t;
 
+typedef struct cdata_st {
+	const char *label;
+	int	    authority;
+	const char *path;
+	const char *id;
+	int         obj_flags;
+} cdata;
+
+
 static const pgp_key_cfg_t key_cfg[3] = {
 	{ "Signature key",      "B601", 1, PGP_SIG_PRKEY_USAGE,  PGP_SIG_PUBKEY_USAGE  },
 	{ "Encryption key",     "B801", 2, PGP_ENC_PRKEY_USAGE,  PGP_ENC_PUBKEY_USAGE  },
 	{ "Authentication key", "A401", 2, PGP_AUTH_PRKEY_USAGE | PGP_ENC_PRKEY_USAGE, PGP_AUTH_PUBKEY_USAGE | PGP_ENC_PUBKEY_USAGE }
 };
 
+static const cdata certs[PGP_MAX_NUM_CERTS] = {
+	{"AUT certificate", 0, "3F007F21", "3", SC_PKCS15_CO_FLAG_MODIFIABLE},
+	{"DEC certificate", 0, "3F007F21", "2", SC_PKCS15_CO_FLAG_MODIFIABLE},
+	{"SIG certificate", 0, "3F007F21", "1", SC_PKCS15_CO_FLAG_MODIFIABLE}
+};
 
 typedef struct _pgp_manuf_map {
 	unsigned short		id;
@@ -132,14 +147,6 @@ static const pgp_manuf_map_t manuf_map[] = {
 	{ 0xffff, "test card"			},
 	{ 0, NULL }
 };
-
-typedef struct cdata_st {
-	const char *label;
-	int	    authority;
-	const char *path;
-	const char *id;
-	int         obj_flags;
-} cdata;
 
 
 /*
@@ -176,8 +183,8 @@ sc_pkcs15emu_openpgp_init(sc_pkcs15_card_t *p15card)
 	int		r, i;
 	const pgp_pin_cfg_t *pin_cfg = (card->type == SC_CARD_TYPE_OPENPGP_V1)
 	                               ? pin_cfg_v1 : pin_cfg_v2;
-
 	sc_file_t *file = NULL;
+	sc_path_t path;
 
 	set_string(&p15card->tokeninfo->label, "OpenPGP card");
 	set_string(&p15card->tokeninfo->manufacturer_id, "OpenPGP project");
@@ -364,57 +371,60 @@ sc_pkcs15emu_openpgp_init(sc_pkcs15_card_t *p15card)
 	}
 
 
-    const u8 NUM_CERTS = 3;
-    const size_t buf_len = MAX_OPENPGP_DO_SIZE;
-    const cdata certs[] = {
-		{"AUT certificate", 0, "3F007F21", "3", SC_PKCS15_CO_FLAG_MODIFIABLE},
-		{"DEC certificate", 0, "3F007F21", "2", SC_PKCS15_CO_FLAG_MODIFIABLE},
-		{"SIG certificate", 0, "3F007F21", "1", SC_PKCS15_CO_FLAG_MODIFIABLE},
-		{NULL, 0, NULL, NULL, 0}
-	};
-
-    sc_path_t path;
-    sc_format_path("7F21", &path);
+	sc_format_path("7F21", &path);
 	r = sc_select_file(card, &path, &file);
 	if (r < 0)
-    	goto failed;
+		goto failed;
 
-	for(u8 i=0; i<NUM_CERTS; i++) {
+	for(u8 i=0; i<PGP_MAX_NUM_CERTS; i++) {
+		struct sc_pkcs15_cert_info cert_info;
+		struct sc_pkcs15_object    cert_obj;
+		u8* buffer = malloc(MAX_OPENPGP_DO_SIZE);
+		size_t resp_len = 0;
 
-        sc_card_ctl(card, SC_CARDCTL_OPENPGP_SELECT_DATA, &i);
+		if (buffer == NULL)
+			goto failed;
 
-        struct sc_pkcs15_cert_info cert_info;
-        struct sc_pkcs15_object    cert_obj;
+		memset(&cert_info, 0, sizeof(cert_info));
+		memset(&cert_obj,  0, sizeof(cert_obj));
 
-        memset(&cert_info, 0, sizeof(cert_info));
-        memset(&cert_obj,  0, sizeof(cert_obj));
+		/* only try to SELECT DATA for OpenPGP >= v3 */
+		if (card->type >= SC_CARD_TYPE_OPENPGP_V3) {
+			r = sc_card_ctl(card, SC_CARDCTL_OPENPGP_SELECT_DATA, &i);
+			if (r < 0) {
+				LOG_TEST_RET(card->ctx, r, "Failed OpenPGP - select data");
+				goto failed;
+			}
+		}
+		sc_format_path(certs[i].path, &cert_info.path);
 
-        u8* buffer = malloc(buf_len);
+		/* Certificate ID. We use the same ID as the authentication key */
+		sc_pkcs15_format_id(certs[i].id, &cert_info.id);
 
-        sc_format_path(certs[i].path, &cert_info.path);
+		resp_len = sc_get_data(card, 0x7F21, buffer, MAX_OPENPGP_DO_SIZE);
 
-        /* Certificate ID. We use the same ID as the authentication key */
-        sc_pkcs15_format_id(certs[i].id, &cert_info.id);
+		/* Response length => free buffer and continue with next id */
+		if (resp_len == 0) {
+			free(buffer);
+			continue;
+		}
 
-        size_t resp_len = sc_get_data(card, 0x7F21, buffer, buf_len);
+		/* Assemble certificate info struct, based on `certs` array */
+		cert_info.value.len = resp_len;
+		cert_info.value.value = buffer;
+		cert_info.authority = certs[i].authority;
+		cert_obj.flags = certs[i].obj_flags;
 
-        /* Response length => free buffer and continue with next id */
-        if (resp_len == 0) {
-            free(buffer);
-            continue;
-        }
+		/* Object label */
+		strlcpy(cert_obj.label, certs[i].label, sizeof(cert_obj.label));
 
-        cert_info.value.len = resp_len;
-        cert_info.value.value = buffer;
-        cert_info.authority = certs[i].authority;
-        cert_obj.flags = certs[i].obj_flags;
+		r = sc_pkcs15emu_add_x509_cert(p15card, &cert_obj, &cert_info);
+		if (r < 0)
+			goto failed;
 
-        /* Object label */
-        strlcpy(cert_obj.label, certs[i].label, sizeof(cert_obj.label));
-
-        r = sc_pkcs15emu_add_x509_cert(p15card, &cert_obj, &cert_info);
-        if (r < 0)
-            goto failed;
+		/* for OpenPGP < v3, stop iteration after first cert */
+		if (card->type < SC_CARD_TYPE_OPENPGP_V3)
+			break;
 	}
 
 
